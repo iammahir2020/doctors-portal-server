@@ -3,6 +3,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const port = process.env.PORT || 5000;
 const app = express();
@@ -45,6 +46,9 @@ async function run() {
       .collection("bookings");
     const userCollection = client.db("doctors_portal").collection("users");
     const doctorCollection = client.db("doctors_portal").collection("doctors");
+    const paymentCollection = client
+      .db("doctors_portal")
+      .collection("payments");
 
     const verifyAdmin = async (req, res, next) => {
       const requester = req.decoded.email;
@@ -67,6 +71,20 @@ async function run() {
      * app.put('/booking/:id') // upsert=> update(if exist) update specific booking if exists or add booking
      * app.delete('/booking/:id') // delete specific booking
      */
+
+    app.post("/create-payment-intent", verifyToken, async (req, res) => {
+      const service = req.body;
+      const price = service.price;
+      const amount = price * 100;
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
 
     app.get("/service", async (req, res) => {
       const query = {};
@@ -157,6 +175,21 @@ async function run() {
       }
     });
 
+    app.get("/booking/:id", verifyToken, async (req, res) => {
+      // const decodedEmail = req.decoded.email;
+      // const patientEmail = req.query.patientEmail;
+      // if (decodedEmail === patientEmail) {
+      const id = req.params.id;
+      console.log(id);
+      const query = { _id: ObjectId(id) };
+      const bookings = await bookingCollection.findOne(query);
+      console.log(bookings);
+      res.send(bookings);
+      // } else {
+      // return res.status(403).send({ message: "Forbidden Access" });
+      // }
+    });
+
     app.post("/booking", async (req, res) => {
       const booking = req.body;
       const query = {
@@ -170,6 +203,24 @@ async function run() {
       }
       const result = await bookingCollection.insertOne(booking);
       res.send({ success: true, result });
+    });
+
+    app.patch("/booking/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const payment = req.body;
+      const filter = { _id: ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          paid: true,
+          transactionId: payment.transactionId,
+        },
+      };
+      const result = await paymentCollection.insertOne(payment);
+      const updatedBooking = await bookingCollection.updateOne(
+        filter,
+        updateDoc
+      );
+      res.send(updateDoc);
     });
 
     app.get("/doctor", verifyToken, verifyAdmin, async (req, res) => {
